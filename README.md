@@ -1,5 +1,12 @@
 ### This is a version of the original source code modified to be used as a Python library.
 
+#### Usage
+
+```bash
+nano .env # Add the NVD_API_KEY here
+python3 ThreatTracer.py -c apache -v 2.4.56
+```
+
 ---
 
 # ThreatTracer - CVE Checker, [Public Exploit Enumerater](https://github.com/anmolksachan/ThreatTracer/blob/main/README.md#public-exploit) and [ZeroDay](https://github.com/anmolksachan/ThreatTracer/assets/60771253/65328a63-a0dd-4902-b7f9-0346564480dc) finder against any product and much more
