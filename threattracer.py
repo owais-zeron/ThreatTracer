@@ -7,7 +7,177 @@ import json
 import csv
 from io import StringIO
 from termcolor import colored
-from bs4 import BeautifulSoup
+from bs4 import Beimport requests, re, time, json, csv, os, argparse
+from io import StringIO
+from dotenv import load_dotenv
+
+cpe = None
+cve_id = None
+use_poc = True
+show_more = True
+use_api = False
+api_key = None
+
+exploit_db_cache = None
+
+def get_exploit_db():
+    global exploit_db_cache
+    if exploit_db_cache is not None:
+        return exploit_db_cache
+    url = "https://gitlab.com/exploit-database/exploitdb/-/raw/main/files_exploits.csv?ref_type=heads"
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        csv_content = StringIO(response.text)
+        reader = csv.DictReader(csv_content)
+        exploit_db_cache = {row['id']: row for row in reader}
+        return exploit_db_cache
+    except:
+        return {}
+
+def search_exploitdb(cve_id):
+    exploits = []
+    cve_id = cve_id.lower()
+    exploit_db = get_exploit_db()
+    for exp_id, data in exploit_db.items():
+        if cve_id in data.get('codes', '').lower():
+            exploits.append({
+                'id': exp_id,
+                'description': data['description'],
+                'link': f"https://www.exploit-db.com/exploits/{exp_id}"
+            })
+    return exploits
+
+def make_api_request(url, params=None):
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if use_api and api_key:
+        headers["apiKey"] = api_key
+    for attempt in range(3):
+        try:
+            response = requests.get(url, params=params, headers=headers)
+            if response.status_code == 429:
+                retry_after = int(response.headers.get('Retry-After', 6))
+                time.sleep(retry_after)
+                continue
+            response.raise_for_status()
+            return response.json()
+        except:
+            time.sleep(2 ** attempt)
+    return None
+
+def find_cpes(component, version):
+    url = "https://services.nvd.nist.gov/rest/json/cpes/2.0"
+    keyword = f"{component} {version}"
+    data = make_api_request(url, {"keywordSearch": keyword})
+    if not data:
+        return []
+    return [item['cpe']['cpeName'] for item in data.get('products', [])]
+
+def fetch_trickest_info(cve_id):
+    year = cve_id.split('-')[1]
+    url = f"https://raw.githubusercontent.com/trickest/cve/refs/heads/main/{year}/{cve_id}.md"
+    try:
+        response = requests.get(url)
+        if response.status_code != 200:
+            return []
+        return list(set(re.findall(r'https://github\.com/[^\s)]+', response.text)))[:5]
+    except:
+        return []
+
+def fetch_cve_details_by_cve(cve_id):
+    url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    data = make_api_request(url, {"cveId": cve_id})
+    if not data:
+        return []
+    vulnerabilities = []
+    for item in data.get('vulnerabilities', []):
+        cve = item['cve']
+        cid = cve['id']
+        exploits = search_exploitdb(cid) if use_poc else []
+        trickest_links = fetch_trickest_info(cid) if use_poc else []
+        vulnerabilities.append({
+            "CVE ID": cid,
+            "Description": cve.get('descriptions', [{}])[0].get('value', 'N/A'),
+            "Weaknesses": ', '.join([d['value'] for w in cve.get('weaknesses', []) for d in w.get('description', [])]),
+            "Link": f"https://nvd.nist.gov/vuln/detail/{cid}",
+            "Exploits": exploits,
+            "GitHub PoCs": trickest_links
+        })
+    return vulnerabilities
+
+def fetch_cve_details_by_cpe(cpe_string):
+    url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+    data = make_api_request(url, {"cpeName": cpe_string})
+    if not data:
+        return []
+    vulnerabilities = []
+    for item in data.get('vulnerabilities', []):
+        cve = item['cve']
+        cid = cve['id']
+        exploits = search_exploitdb(cid) if use_poc else []
+        trickest_links = fetch_trickest_info(cid) if use_poc else []
+        vulnerabilities.append({
+            "CVE ID": cid,
+            "Description": cve.get('descriptions', [{}])[0].get('value', 'N/A'),
+            "Weaknesses": ', '.join([d['value'] for w in cve.get('weaknesses', []) for d in w.get('description', [])]),
+            "Link": f"https://nvd.nist.gov/vuln/detail/{cid}",
+            "Exploits": exploits,
+            "GitHub PoCs": trickest_links
+        })
+    return vulnerabilities
+
+def parse_cli_args():
+    parser = argparse.ArgumentParser(description="ThreatTracer CLI")
+    parser.add_argument("-c", "--component", required=True, help="Component name")
+    parser.add_argument("-v", "--version", required=True, help="Component version")
+    parser.add_argument("-o", "--output", help="Optional output file name (.json)")
+    return parser.parse_args()
+
+def threatTracer(component, version):
+    results = {"input": {}, "output": {}}
+    if cve_id:
+        results["input"]["mode"] = "cve"
+        results["input"]["cve"] = cve_id
+        results["output"]["vulnerabilities"] = fetch_cve_details_by_cve(cve_id.upper())
+    elif cpe:
+        results["input"]["mode"] = "cpe"
+        results["input"]["cpe"] = cpe
+        results["output"]["vulnerabilities"] = fetch_cve_details_by_cpe(cpe)
+    else:
+        results["input"]["mode"] = "component+version"
+        results["input"]["component"] = component
+        results["input"]["version"] = version
+        cpes = find_cpes(component, version)
+        results["output"]["cpes"] = cpes
+        results["output"]["vulnerabilities"] = []
+        for c in cpes: results["output"]["vulnerabilities"].extend(fetch_cve_details_by_cpe(c))
+    
+    return results
+
+if __name__ == "__main__":
+    load_dotenv()
+    api_key = os.getenv("NVD_API_KEY")
+    if not api_key:
+        print("NVD_API_Key not found in .env file. Please set it.")
+        exit(1)
+
+    args = parse_cli_args()
+    component = args.component
+    version = args.version
+    
+    output_file = args.output
+
+    result = threatTracer(component, version)
+
+    if not output_file:
+        timestamp = int(time.time() * 1000)
+        os.makedirs("output/", exist_ok=True)
+        output_file = f"output/{component}_{version}_{timestamp}.json"
+
+    with open(output_file, "w") as f: json.dump(result, f, indent=2)
+
+    print(f"Results saved to {output_file}")
+autifulSoup
 import argparse
 
 # Configuration

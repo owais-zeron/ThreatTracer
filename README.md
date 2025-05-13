@@ -1,3 +1,7 @@
+### This is a version of the original source code modified to be used as a Python library.
+
+---
+
 # ThreatTracer - CVE Checker, [Public Exploit Enumerater](https://github.com/anmolksachan/ThreatTracer/blob/main/README.md#public-exploit) and [ZeroDay](https://github.com/anmolksachan/ThreatTracer/assets/60771253/65328a63-a0dd-4902-b7f9-0346564480dc) finder against any product and much more
 
 <!--![ThreatTracer Banner version 2 1 OLD ](https://github.com/anmolksachan/ThreatTracer/assets/60771253/77092c9f-f3f2-401d-8b16-d4a21a945249)-->
